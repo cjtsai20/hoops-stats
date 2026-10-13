@@ -111,3 +111,5 @@ dialog button.x { border: 0; background: rgb(255 255 255 / .18); color: #fff; wi
 .badge { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); margin-left: 6px; font-weight: 500; }
 .hero .badge { background: rgb(255 255 255 / .2); color: #fff; }
 .loading { display: grid; place-items: center; height: 60vh; color: var(--text-muted); font-size: 15px; }
+.others-head { margin: 18px 4px 8px; font-size: 14px; }
+table.others tbody tr { cursor: pointer; }

@@ -201,7 +201,7 @@ function renderTeam() {
   el._rows = ps;
 }
 
-// --- Player history: every team-season with the same normalized name ---
+// --- Player history: same name AND matching identity (hometown, height, team continuity) ---
 const normName = n => { n = String(n || ''); if (n.includes(',')) { const [l, f] = n.split(','); n = f + ' ' + l; }
   return n.toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, '').replace(/-/g, ' ').replace(/[^a-z ]/g, '').split(/\s+/).filter(Boolean).sort().join(' '); };
 let INDEX = null;
@@ -215,13 +215,89 @@ function buildIndex() {
     }
 }
 
-function showPlayer(name) {
+// Hometowns come as "Lincoln, Neb.", "Omaha, NE", "Saint Paul, Minnesota", "Milwaukee"...
+const STATES = { al: 'al', ala: 'al', alabama: 'al', ak: 'ak', alaska: 'ak', az: 'az', ariz: 'az', arizona: 'az', ar: 'ar', ark: 'ar', arkansas: 'ar',
+  ca: 'ca', calif: 'ca', cal: 'ca', california: 'ca', co: 'co', colo: 'co', colorado: 'co', ct: 'ct', conn: 'ct', connecticut: 'ct', de: 'de', del: 'de', delaware: 'de',
+  dc: 'dc', fl: 'fl', fla: 'fl', florida: 'fl', ga: 'ga', georgia: 'ga', hi: 'hi', hawaii: 'hi', id: 'id', idaho: 'id', il: 'il', ill: 'il', illinois: 'il',
+  in: 'in', ind: 'in', indiana: 'in', ia: 'ia', iowa: 'ia', ks: 'ks', kan: 'ks', kans: 'ks', kansas: 'ks', ky: 'ky', kentucky: 'ky', la: 'la', louisiana: 'la',
+  me: 'me', maine: 'me', md: 'md', maryland: 'md', ma: 'ma', mass: 'ma', massachusetts: 'ma', mi: 'mi', mich: 'mi', michigan: 'mi', mn: 'mn', minn: 'mn', minnesota: 'mn',
+  ms: 'ms', miss: 'ms', mississippi: 'ms', mo: 'mo', missouri: 'mo', mt: 'mt', mont: 'mt', montana: 'mt', ne: 'ne', neb: 'ne', nebr: 'ne', nebraska: 'ne',
+  nv: 'nv', nev: 'nv', nevada: 'nv', nh: 'nh', nj: 'nj', nm: 'nm', ny: 'ny', nc: 'nc', nd: 'nd', oh: 'oh', ohio: 'oh', ok: 'ok', okla: 'ok', oklahoma: 'ok',
+  or: 'or', ore: 'or', oregon: 'or', pa: 'pa', penn: 'pa', pennsylvania: 'pa', ri: 'ri', sc: 'sc', sd: 'sd', tn: 'tn', tenn: 'tn', tennessee: 'tn',
+  tx: 'tx', tex: 'tx', texas: 'tx', ut: 'ut', utah: 'ut', vt: 'vt', vermont: 'vt', va: 'va', virginia: 'va', wa: 'wa', wash: 'wa', washington: 'wa',
+  wv: 'wv', wi: 'wi', wis: 'wi', wisc: 'wi', wisconsin: 'wi', wy: 'wy', wyo: 'wy', wyoming: 'wy',
+  'new hampshire': 'nh', 'new jersey': 'nj', 'new mexico': 'nm', 'new york': 'ny', 'north carolina': 'nc', 'north dakota': 'nd', 'rhode island': 'ri',
+  'south carolina': 'sc', 'south dakota': 'sd', 'west virginia': 'wv', 'n.h': 'nh', 'n.j': 'nj', 'n.m': 'nm', 'n.y': 'ny', 'n.c': 'nc', 'n.d': 'nd',
+  'r.i': 'ri', 's.c': 'sc', 's.d': 'sd', 'w.va': 'wv', 'd.c': 'dc' };
+function place(hometown) {
+  if (!hometown) return null;
+  const [cityRaw, ...rest] = String(hometown).split('/')[0].split(',');  // "Morrison, Colo. / Bear Creek" -> hometown only
+  const city = cityRaw.toLowerCase().replace(/\bst\.?\s/g, 'saint ').replace(/\bft\.?\s/g, 'fort ').replace(/\bmt\.?\s/g, 'mount ')
+    .replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+  const stRaw = rest.join(',').toLowerCase().trim().replace(/\.$/, '');
+  const st = STATES[stRaw] || STATES[stRaw.replace(/\./g, '')] || (stRaw ? stRaw.replace(/[^a-z ]/g, '') : null);
+  return city ? { city, st } : null;
+}
+function samePlace(a, b) {
+  if (!a || !b) return null;                       // unknown
+  if (a.city !== b.city && !a.city.startsWith(b.city + ' ') && !b.city.startsWith(a.city + ' ')) return false;
+  return a.st && b.st ? a.st === b.st : true;
+}
+const HT_TOL = 2;                                 // inches: players grow (or get re-measured) a little
+function sameHeight(a, b) { return a.ht_in && b.ht_in ? Math.abs(a.ht_in - b.ht_in) <= HT_TOL : null; }
+const teamWords = name => name.toLowerCase().replace(/university|college|community|state|of|the|at|junior|-/g, ' ').split(/\s+/).filter(w => w.length > 3);
+const prevNames = (p, team) => p.prev && teamWords(team).some(w => p.prev.toLowerCase().includes(w));
+
+// Is record b the same person as record a? true / false
+function sameIdentity(a, b) {
+  if (a.season === b.season) return a.team === b.team && a.level === b.level;  // one team per season
+  const home = samePlace(place(a.p.hometown), place(b.p.hometown));
+  const ht = sameHeight(a.p, b.p);
+  const prevLink = a.team !== b.team && (prevNames(a.p, b.team) || prevNames(b.p, a.team));
+  if (ht === false) return false;
+  // A roster naming the other school as a previous stop outweighs a hometown mismatch
+  // (some sites list the high school's town instead of the hometown).
+  if (home === false && !prevLink) return false;
+  if (a.team === b.team && a.level === b.level) return true;                    // same program, other season
+  // A move between programs needs positive evidence: hometown, or the previous-school field naming the other team.
+  return home === true || prevLink;
+}
+
+// Hard contradictions: a different hometown, or heights more than HT_TOL apart.
+const conflicts = (a, b) => sameHeight(a.p, b.p) === false
+  || (samePlace(place(a.p.hometown), place(b.p.hometown)) === false && !(a.team !== b.team && (prevNames(a.p, b.team) || prevNames(b.p, a.team))));
+
+// Grow a career outward from the clicked season, linking only records that pass sameIdentity.
+function career(anchor) {
+  const all = INDEX.get(normName(anchor.p.name)) || [];
+  const linked = [anchor], pool = all.filter(r => r.p !== anchor.p);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (let i = pool.length - 1; i >= 0; i--) {
+      const r = pool[i];
+      if (linked.some(l => l.season === r.season && (l.team !== r.team || l.level !== r.level))) continue;
+      if (linked.some(l => sameIdentity(l, r)) && !linked.some(l => conflicts(l, r))) {
+        linked.push(r); pool.splice(i, 1); grew = true;
+      }
+    }
+  }
+  const sort = arr => arr.sort((a, b) => a.season.localeCompare(b.season) || a.team.localeCompare(b.team));
+  return { linked: sort(linked), others: sort(pool) };
+}
+
+let OTHERS = [];
+function showPlayer(anchor) {
   if (!INDEX) buildIndex();
-  const hits = (INDEX.get(normName(name)) || []).slice().sort((a, b) => a.season.localeCompare(b.season));
-  const teamsSeen = new Set(hits.map(h => h.team));
-  $('pname').textContent = name;
+  if (typeof anchor === 'string') {                    // deep link by name: pick the most recent record
+    const hits = INDEX.get(normName(anchor)) || [];
+    anchor = hits.slice().sort((a, b) => b.season.localeCompare(a.season))[0];
+    if (!anchor) return;
+  }
+  const { linked, others } = career(anchor);
+  $('pname').textContent = anchor.p.name;
   const C = [['season', 'Season'], ['team', 'Team'], ['lvl', 'Level'], ['yr', 'Yr'], ['ht', 'Ht'], ['wt', 'Wt'], ...PG_COLS.map(c => [c[0], c[1], c[2], c[3]])];
-  const rows = hits.map(h => '<tr>' + C.map(c => {
+  const row = h => '<tr>' + C.map(c => {
     if (c[0] === 'season') return `<td>${h.season}</td>`;
     if (c[0] === 'team') return `<td><span class="dot" style="--c: ${chipColor(DATA.levels[h.level][h.conf][h.team].color)}"></span>${esc(h.team)}</td>`;
     if (c[0] === 'lvl') return `<td>${esc(h.level)}</td>`;
@@ -229,17 +305,26 @@ function showPlayer(name) {
     if (c[0] === 'ht') return `<td class="n">${esc(htStr(h.p))}</td>`;
     if (c[0] === 'wt') return `<td class="n">${esc(h.p.wt ?? '')}</td>`;
     return `<td class="n">${esc(c[3](c[2](h.p)))}</td>`;
-  }).join('') + '</tr>').join('');
-  const last = hits[hits.length - 1]?.p || {};
-  const bio = [last.pos && `Pos ${last.pos}`, last.hometown, last.hs && `HS: ${last.hs}`, last.prev && `Prev: ${last.prev}`].filter(Boolean).map(esc).join(' · ');
-  const latest = hits[hits.length - 1];
-  if (latest) applyTeamColors(DATA.levels[latest.level][latest.conf][latest.team].color);
-  $('pbody').innerHTML = `<p class="meta">${bio}</p><div class="table-wrap"><table><thead><tr>${C.map(c => `<th class="${['season','team','lvl','yr'].includes(c[0]) ? '' : 'n'}">${c[1]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
-    ${teamsSeen.size > 1 ? '<p class="note">Matched across teams by name only — players with common names may be mixed together; check hometown and previous school.</p>' : ''}`;
-  $('player').showModal();
+  }).join('') + '</tr>';
+  const last = linked[linked.length - 1].p;
+  const home = linked.map(h => h.p.hometown).filter(Boolean).pop();  // most recent listing
+  const bio = [last.pos && `Pos ${last.pos}`, home, last.hs && `HS: ${last.hs}`, last.prev && `Prev: ${last.prev}`].filter(Boolean).map(esc).join(' · ');
+  applyTeamColors(DATA.levels[anchor.level][anchor.conf][anchor.team].color);
+  const head = `<thead><tr>${C.map(c => `<th class="${['season','team','lvl','yr'].includes(c[0]) ? '' : 'n'}">${c[1]}</th>`).join('')}</tr></thead>`;
+  OTHERS = others;
+  const otherList = others.length ? `<h4 class="others-head">Other players named ${esc(anchor.p.name)} <span class="meta">— not linked: hometown or height doesn't match, or there isn't enough info to tell</span></h4>
+    <div class="table-wrap"><table class="others"><thead><tr><th>Season</th><th>Team</th><th>Level</th><th>Hometown</th><th class="n">Ht</th><th class="n">PPG</th></tr></thead><tbody>
+    ${others.map((h, i) => `<tr data-o="${i}"><td>${h.season}</td><td><span class="dot" style="--c: ${chipColor(DATA.levels[h.level][h.conf][h.team].color)}"></span>${esc(h.team)}</td><td>${esc(h.level)}</td><td>${esc(h.p.hometown || '—')}</td><td class="n">${esc(htStr(h.p) || '—')}</td><td class="n">${esc(F1(h.p.stats?.ppg ?? per(h.p.stats, 'pts')))}</td></tr>`).join('')}
+    </tbody></table></div>` : '';
+  const crossTeam = new Set(linked.map(h => h.level + h.team)).size > 1;
+  $('pbody').innerHTML = `<p class="meta">${bio}</p><div class="table-wrap"><table>${head}<tbody>${linked.map(row).join('')}</tbody></table></div>
+    ${crossTeam ? `<p class="note">Seasons at different schools are linked only when the hometown matches or the roster's previous-school field names the other school, and listed heights are within ${HT_TOL}″.</p>` : ''}
+    ${otherList}`;
+  if (!$('player').open) $('player').showModal();
   // Closing the popup restores the current page's colors.
   $('player').onclose = () => (state.view === 'leaders' ? applyTeamColors(null) : applyTeamColors(teams()[state.team]?.color));
 }
+$('pbody').onclick = e => { const tr = e.target.closest('tr[data-o]'); if (tr) showPlayer(OTHERS[+tr.dataset.o]); };
 
 // --- Stat leaders: every player-season in the level, filtered and ranked ---
 const CLASS_ORDER = ['Fr', 'So', 'Jr', 'Sr', 'Gr'];
@@ -264,7 +349,7 @@ function leaderRows() {
       for (const p of ps) {
         if (!p.stats || !p.stats.gp || p.stats.gp < lead.minGp) continue;
         if (lead.cls && classOf(p.yr) !== lead.cls) continue;
-        out.push({ ...p, team, conf, season });
+        out.push({ ...p, team, conf, season, _p: p });
       }
     }
   }
@@ -388,17 +473,19 @@ $('team').onclick = e => {
   if (state.view === 'leaders') {
     const th = e.target.closest('th[data-k]');
     if (th) { const k = th.dataset.k; lead.sort = { key: k, dir: lead.sort.key === k ? -lead.sort.dir : (ASC_FIRST.includes(k) ? 1 : -1) }; renderLeaders(); return; }
-    const tr = e.target.closest('tbody tr'); if (tr) showPlayer($('team')._rows[+tr.dataset.i].name);
+    const tr = e.target.closest('tbody tr');
+    if (tr) { const r = $('team')._rows[+tr.dataset.i]; showPlayer({ level: state.level, conf: r.conf, team: r.team, season: r.season, p: r._p }); }
     return;
   }
   const th = e.target.closest('th');
   if (th) { const k = th.dataset.k; state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : (['name', 'pos', 'yr', 'num', 'hometown', 'prev'].includes(k) ? 1 : -1) }; renderTeam(); return; }
-  const tr = e.target.closest('tbody tr'); if (tr) showPlayer($('team')._rows[+tr.dataset.i].name);
+  const tr = e.target.closest('tbody tr');
+  if (tr) showPlayer({ level: state.level, conf: state.conf, team: state.team, season: state.season, p: $('team')._rows[+tr.dataset.i] });
 };
 $('search').onchange = e => {
   const q = normName(e.target.value); if (!q) return; if (!INDEX) buildIndex();
   const hit = INDEX.get(q) || [...INDEX.entries()].find(([k]) => q.split(' ').every(w => k.includes(w)))?.[1];
-  if (hit) showPlayer(hit[hit.length - 1].p.name); else alert('No player found');
+  if (hit) showPlayer(hit.slice().sort((a, b) => b.season.localeCompare(a.season))[0]); else alert('No player found');
 };
 $('theme').onclick = () => { const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; r.dataset.theme = dark ? 'light' : 'dark'; render(); };
 // Deep links: #level=JUCO&conf=...&team=Hutchinson&season=2024-25&player=Name&theme=dark
@@ -454,6 +541,10 @@ def compact(data):
                     for p in players:
                         p.pop("bio", None)
                         p["pos"], p["yr"] = norm_pos(p.get("pos")), norm_yr(p.get("yr"))
+                        if "/" in (p.get("hometown") or "") and not p.get("hs"):
+                            # Some rosters combine "Hometown / High School" in one column.
+                            home, _, hs = p["hometown"].partition("/")
+                            p["hometown"], p["hs"] = home.strip(), hs.strip() or None
                         if p.get("ht_in"):
                             p.pop("ht", None)
                         for k in [k for k, v in p.items() if v in (None, "")]:
