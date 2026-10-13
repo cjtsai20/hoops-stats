@@ -1,0 +1,6 @@
+cache/
+data/
+*.log
+__pycache__/
+*.png
+bball_team_viewer.html
